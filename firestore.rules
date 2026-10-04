@@ -1,0 +1,96 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.role == 'student'
+        && request.resource.data.status == 'pending';
+      allow update: if isAdmin()
+        || (signedIn()
+          && request.auth.uid == userId
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.status == resource.data.status
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['name', 'address', 'lrn', 'progress'])
+          && validProgress(request.resource.data)
+          && (!request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(['progress'])
+            || validProgressUpdate()));
+      allow delete: if isAdmin();
+    }
+
+    function validProgress(userData) {
+      return !userData.keys().hasAny(['progress'])
+        || (userData.progress is map
+          && userData.progress.keys().hasOnly([
+            'completedLevels',
+            'unlockedLevels',
+            'questAttempts',
+            'maxUnlockedSubLevel'
+          ])
+          && (!userData.progress.keys().hasAny(['completedLevels'])
+            || (userData.progress.completedLevels is list
+              && userData.progress.completedLevels.size() <= 60))
+          && (!userData.progress.keys().hasAny(['unlockedLevels'])
+            || (userData.progress.unlockedLevels is int
+              && userData.progress.unlockedLevels >= 1
+              && userData.progress.unlockedLevels <= 3))
+          && (!userData.progress.keys().hasAny(['questAttempts'])
+            || (userData.progress.questAttempts is int
+              && userData.progress.questAttempts >= 0))
+          && (!userData.progress.keys().hasAny(['maxUnlockedSubLevel'])
+            || (userData.progress.maxUnlockedSubLevel is map
+              && userData.progress.maxUnlockedSubLevel.keys()
+                .hasOnly(['1', '2', '3'])
+              && validSublevel(userData.progress.maxUnlockedSubLevel))));
+    }
+
+    function validSublevel(levels) {
+      return (!levels.keys().hasAny(['1'])
+          || (levels['1'] is int && levels['1'] >= 1 && levels['1'] <= 20))
+        && (!levels.keys().hasAny(['2'])
+          || (levels['2'] is int && levels['2'] >= 1 && levels['2'] <= 20))
+        && (!levels.keys().hasAny(['3'])
+          || (levels['3'] is int && levels['3'] >= 1 && levels['3'] <= 20));
+    }
+
+    function validProgressUpdate() {
+      let oldProgress = resource.data.get('progress', {});
+      let newProgress = request.resource.data.get('progress', {});
+      let oldLevels = oldProgress.get('completedLevels', []);
+      let newLevels = newProgress.get('completedLevels', []);
+      return oldProgress is map
+        && newProgress is map
+        && oldLevels is list
+        && newLevels is list
+        && newLevels.hasAll(oldLevels)
+        && newLevels.hasOnly([
+          1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+          11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+          21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+          31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+          41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+          51, 52, 53, 54, 55, 56, 57, 58, 59, 60
+        ])
+        && newLevels.toSet().size() == newLevels.size()
+        && newLevels.size() <= oldLevels.size() + 1;
+    }
+
+    match /leaderboard/{userId} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+  }
+}
